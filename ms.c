@@ -33,6 +33,7 @@ static void visittestlists    (UnitTestlistlist uss);
 static void visitregister     (Register reg);
 static void visitregisterlist (Registerlist regs);
 static void visitroots        (void);
+static void mark              (void);
 /* private declarations for mark-and-sweep collection S641a */
 static int nalloc;              /* total number of allocations */
 static int ncollections;        /* total number of collections */
@@ -67,16 +68,101 @@ static void addpage(void) {
     makecurrent(page);
     heapsize += GROWTH_UNIT;   /* OMIT */
 }
+
+// PT 1: Implement MARK
+// Implement a mark procedure. Write a procedure mark that implements the
+// mark phase of a mark‐and‐sweep garbage collector. At each collection, tra‐
+// verse the root set and mark each reachable Mvalue as live. Use the visiting
+// procedures in Sections 4.4.2 and N.1.1. Your mark procedure should call the
+// appropriate visiting procedure for each of the roots.
+void mark() {
+    nmarks = 0;
+    visitroots();
+}
+
+// PT 2: Implement ALLOCLOC
+// Implement a markandsweep allocator. Create an allocator that, together with
+// your mark procedure from Exercise 9, forms a complete mark‐and‐sweep sys‐
+// tem.
+// • The allocator must implement not only allocation but also the unmark
+//   and sweep phases of collection. It will sweep through the heap from the
+//   first page to the last page. Instead of just taking the location pointed to
+//   by hp, as in chunk 268b, the allocator must check to see if the location
+//   is marked live. If marked, it was live at the last collection, so it cannot
+//   be used to satisfy the allocation request. Skip past it and mark it not
+//   live.
+//   When the allocator finds an unmarked object, it sweeps past the object
+//   and returns it to satisfy the allocation request, just as in chunk 268b.
+//   If the allocator reaches the end of the heap without finding an un‐
+//   marked object, it calls mark.
+// • In the new system, end‐of‐page is not the same as end‐of‐heap.
+//   White areas, to the left of the heap pointer, have been used to satisfy
+//   previous allocation requests. Areas marked with gray diamonds, to the
+//   right of the heap pointer, are potentially available to satisfy future allo‐
+//   cation requests.5 When hp reaches heaplimit, the allocator must look
+//   at the next page; modify the code in chunk 268b to make it so. Only
+//   after there are no more pages may the allocator call mark.
+// • After your allocator calls mark, have it call makecurrent(pagelist),
+//   which will reset hp, heaplimit, and curpage to point into the first page.
+// • The allocator now guarantees that when mark is called, the entire heap
+//   is unmarked (Exercise 12). But mark cannot guarantee to recover any‐
+//   thing; every cell on the heap might be live. The allocator may have to
+//   enlarge the heap by adding a new page. Write a procedure growheap
+//   for this purpose.
+//
+// You may find it helpful to split allocloc into two functions: one that attempts
+// to allocate without calling mark, but sometimes fails, and another that may
+// call the first function, mark, and growheap.
 /* ms.c ((prototype)) 268b */
 Value* allocloc(void) {
-    if (hp == heaplimit)
-        addpage();
-    assert(hp < heaplimit);
 
-/* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
-    gc_debug_pre_allocate(&hp->v);
-    return &(hp++)->v;
+    // Try to find an unmarked object in the heap
+    while (hp < heaplimit) {
+        Mvalue *m = (Mvalue*) hp;
+        if (!m->live) {
+            // Found an unmarked object
+            // Mark it live and return
+            m->live = 1;
+            /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+            gc_debug_pre_allocate(&hp->v);
+            return &(hp++)->v;
+        } else {
+            // Found a marked object
+            // Skip past it and mark it as not live
+            m->live = 0;
+        }
+        hp++; // Move to the next object
+    }
+
+    // If all objects are marked, mark-and-sweep, then retry allocation
+    mark(); // Mark phase
+    makecurrent(pagelist); // Reset heap pointers to the first page
+
+    // Try to find an unmarked object again
+    while (hp < heaplimit) {
+        Mvalue *m = (Mvalue*) hp;
+        if (!m->live) {
+            // Found an unmarked object
+            // Mark it live and return
+            m->live = 1;
+            /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+            gc_debug_pre_allocate(&hp->v);
+            return &(hp++)->v;
+        } else {
+            // Found a marked object
+            // Skip past it and mark it as not live
+            m->live = 0;
+        }
+        hp++; // Move to the next object
+    }
+
+    // If no unmarked objects found, grow the heap
+    addpage();
+    
+    // Try allocation again after growing the heap
+    return allocloc();
 }
+
 /* ms.c 269b */
 static void visitenv(Env env) {
     for (; env; env = env->tl)
