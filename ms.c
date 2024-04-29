@@ -33,10 +33,11 @@ static void visittestlists    (UnitTestlistlist uss);
 static void visitregister     (Register reg);
 static void visitregisterlist (Registerlist regs);
 static void visitroots        (void);
+static void mark              (void);
 /* private declarations for mark-and-sweep collection S641a */
-static int nalloc;              /* total number of allocations */
-static int ncollections;        /* total number of collections */
-static int nmarks;              /* total number of cells marked */
+static int nalloc = 0;              /* total number of allocations */
+static int ncollections = 0;        /* total number of collections */
+static int nmarks = 0;              /* total number of cells marked */
 /* ms.c 267b */
 bool gc_uses_mark_bits = true;
 /* ms.c 267e */
@@ -67,16 +68,99 @@ static void addpage(void) {
     makecurrent(page);
     heapsize += GROWTH_UNIT;   /* OMIT */
 }
+
+static void mark() {
+    int startN = nmarks;
+    visitroots();   // Visit and mark all roots
+    ncollections++;
+    int liveData = nmarks - startN; // Calculate the number of live data
+    printf("[GC stats: heap size %d live data %d ratio %.2f]\n", heapsize, liveData, (double)heapsize/liveData);
+    if (ncollections % 10 == 0) {
+        printf("[Mem stats: allocated %d heap size %d ratio %.2f]\n", nalloc, heapsize, (double)nalloc/heapsize);
+    }
+}
+
 /* ms.c ((prototype)) 268b */
 Value* allocloc(void) {
-    if (hp == heaplimit)
-        addpage();
-    assert(hp < heaplimit);
 
-/* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
-    gc_debug_pre_allocate(&hp->v);
-    return &(hp++)->v;
+    // If the heap is empty, add a page
+    if (pagelist == NULL) {
+        addpage();
+    }
+
+    // Loop through the pages
+    while (curpage != NULL) {
+        // Try to find an unmarked object
+        while (hp < heaplimit) {
+            Mvalue *m = hp;
+            if (!m->live) {
+                // Found an unmarked object
+                // If the object is not live, then the object needs to be available for allocation
+                if (m->v.alt != INVALID) {
+                    gc_debug_post_reclaim(&hp->v);
+                }
+                /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+                gc_debug_pre_allocate(&hp->v);
+                nalloc++;
+                return &(hp++)->v;
+            } else {
+                // Found a marked object
+                // Skip past it and mark it as not live
+                m->live = 0;
+            }
+            hp++; // Move to the next object
+        }
+
+        // If it exists, move to the next page, else break
+        if (curpage->tl != NULL) {
+            makecurrent(curpage->tl);
+        } else {
+            break;
+        }
+    }
+
+    // If all objects are marked, mark-and-sweep, then retry allocation
+    mark(); // Mark phase
+    makecurrent(pagelist); // Reset heap pointers to the first page
+
+    // Loop through the pages again
+    while (curpage != NULL) {
+        // Try to find an unmarked object again
+        while (hp < heaplimit) {
+            Mvalue *m = hp;
+            if (!m->live) {
+                // Found an unmarked object
+                // If the object is not live, then the object needs to be available for allocation
+                if (m->v.alt != INVALID) {
+                    gc_debug_post_reclaim(&hp->v);
+                }
+                /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+                gc_debug_pre_allocate(&hp->v);
+                nalloc++;
+                return &(hp++)->v;
+            } else {
+                // Found a marked object
+                // Skip past it and mark it as not live
+                m->live = 0;
+            }
+            hp++; // Move to the next object
+        }
+
+        // If it exists, move to the next page, else break
+        if (curpage->tl != NULL) {
+            makecurrent(curpage->tl);
+        } else {
+            break;
+        }
+    }
+
+    // If no unmarked objects found, grow the heap
+    addpage();
+    
+    // Try allocation again after growing the heap
+    return allocloc();
 }
+
 /* ms.c 269b */
 static void visitenv(Env env) {
     for (; env; env = env->tl)
@@ -87,6 +171,7 @@ static void visitloc(Value *loc) {
     Mvalue *m = (Mvalue*) loc;
     if (!m->live) {
         m->live = 1;
+        nmarks++;
         visitvalue(m->v);
     }
 }
@@ -249,10 +334,9 @@ static void visitroots(void) {
     visitregisterlist(roots.registers);
 }
 /* ms.c ((prototype)) S377g */
-/* you need to redefine these functions */
 void printfinalstats(void) { 
-  (void)nalloc; (void)ncollections; (void)nmarks;
-  assert(0); 
+    printf("[Mem stats: allocated %d heap size %d ratio %.2f]\n", nalloc, heapsize, (double)nalloc/heapsize);
+    printf("[Total GC work: %d collections marked %d objects; %.2f marks/allocation]\n", ncollections, nmarks, (double)nmarks/nalloc);
 }
 /* ms.c ((prototype)) S377h */
 void avoid_unpleasant_compiler_warnings(void) {
