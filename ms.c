@@ -126,38 +126,13 @@ Value* allocloc(void) {
         addpage();
     }
 
-    // Try to find an unmarked object in the heap
-    while (hp != heaplimit) {
-        Mvalue *m = hp;
-        if (!m->live) {
-            // Found an unmarked object
-            // Mark it live and return
-            m->live = 1;
-            /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
-            gc_debug_pre_allocate(&hp->v);
-            nalloc++;
-            return &(hp++)->v;
-        } else {
-            // Found a marked object
-            // Skip past it and mark it as not live
-            m->live = 0;
-        }
-        hp++; // Move to the next object
-    }
-
-    // If all objects are marked, mark-and-sweep, then retry allocation
-    mark(); // Mark phase
-    makecurrent(pagelist); // Reset heap pointers to the first page
-
     // Loop through the pages
-    while (curpage->tl != NULL) {
+    while (curpage != NULL) {
         // Try to find an unmarked object again
-        while (hp != heaplimit) {
+        while (hp < heaplimit) {
             Mvalue *m = hp;
             if (!m->live) {
                 // Found an unmarked object
-                // Mark it live and return
-                m->live = 1;
                 /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
                 gc_debug_pre_allocate(&hp->v);
                 nalloc++;
@@ -170,9 +145,42 @@ Value* allocloc(void) {
             hp++; // Move to the next object
         }
 
-        // Move to the next page
+        // If it exists, move to the next page, else break
         if (curpage->tl != NULL) {
             makecurrent(curpage->tl);
+        } else {
+            break;
+        }
+    }
+
+    // If all objects are marked, mark-and-sweep, then retry allocation
+    mark(); // Mark phase
+    makecurrent(pagelist); // Reset heap pointers to the first page
+
+    // Loop through the pages
+    while (curpage != NULL) {
+        // Try to find an unmarked object again
+        while (hp < heaplimit) {
+            Mvalue *m = hp;
+            if (!m->live) {
+                // Found an unmarked object
+                /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+                gc_debug_pre_allocate(&hp->v);
+                nalloc++;
+                return &(hp++)->v;
+            } else {
+                // Found a marked object
+                // Skip past it and mark it as not live
+                m->live = 0;
+            }
+            hp++; // Move to the next object
+        }
+
+        // If it exists, move to the next page, else break
+        if (curpage->tl != NULL) {
+            makecurrent(curpage->tl);
+        } else {
+            break;
         }
     }
 
