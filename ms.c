@@ -35,9 +35,9 @@ static void visitregisterlist (Registerlist regs);
 static void visitroots        (void);
 static void mark              (void);
 /* private declarations for mark-and-sweep collection S641a */
-static int nalloc;              /* total number of allocations */
-static int ncollections;        /* total number of collections */
-static int nmarks;              /* total number of cells marked */
+static int nalloc = 0;              /* total number of allocations */
+static int ncollections = 0;        /* total number of collections */
+static int nmarks = 0;              /* total number of cells marked */
 /* ms.c 267b */
 bool gc_uses_mark_bits = true;
 /* ms.c 267e */
@@ -76,8 +76,14 @@ static void addpage(void) {
 // procedures in Sections 4.4.2 and N.1.1. Your mark procedure should call the
 // appropriate visiting procedure for each of the roots.
 void mark() {
-    nmarks = 0;
+    int startN = nmarks;
     visitroots();
+    ncollections++;
+    int liveData = nmarks - startN;
+    printf("[GC stats: heap size %d live data %d ratio %.2f]\n", heapsize, liveData, (double)heapsize/liveData);
+    if (ncollections % 10 == 0) {
+        printf("[Mem stats: allocated %d heap size %d ratio %.2f]\n", nalloc, heapsize, (double)nalloc/heapsize);
+    }
 }
 
 // PT 2: Implement ALLOCLOC
@@ -116,15 +122,20 @@ void mark() {
 /* ms.c ((prototype)) 268b */
 Value* allocloc(void) {
 
+    if (pagelist == NULL) {
+        addpage();
+    }
+
     // Try to find an unmarked object in the heap
     while (hp < heaplimit) {
-        Mvalue *m = (Mvalue*) hp;
-        if (!m->live) {
+        Mvalue *m = hp;
+        if (m->live != 1) {
             // Found an unmarked object
             // Mark it live and return
             m->live = 1;
             /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
             gc_debug_pre_allocate(&hp->v);
+            nalloc++;
             return &(hp++)->v;
         } else {
             // Found a marked object
@@ -140,13 +151,14 @@ Value* allocloc(void) {
 
     // Try to find an unmarked object again
     while (hp < heaplimit) {
-        Mvalue *m = (Mvalue*) hp;
-        if (!m->live) {
+        Mvalue *m = hp;
+        if (m->live != 1) {
             // Found an unmarked object
             // Mark it live and return
             m->live = 1;
             /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
             gc_debug_pre_allocate(&hp->v);
+            nalloc++;
             return &(hp++)->v;
         } else {
             // Found a marked object
@@ -173,6 +185,7 @@ static void visitloc(Value *loc) {
     Mvalue *m = (Mvalue*) loc;
     if (!m->live) {
         m->live = 1;
+        nmarks++;
         visitvalue(m->v);
     }
 }
@@ -335,10 +348,9 @@ static void visitroots(void) {
     visitregisterlist(roots.registers);
 }
 /* ms.c ((prototype)) S377g */
-/* you need to redefine these functions */
 void printfinalstats(void) { 
-  (void)nalloc; (void)ncollections; (void)nmarks;
-  assert(0); 
+    printf("[Mem stats: allocated %d heap size %d ratio %.2f]\n", nalloc, heapsize, (double)nalloc/heapsize);
+    printf("[Total GC work: %d collections marked %d objects; %.2f marks/allocation]\n", ncollections, nmarks, (double)nmarks/nalloc);
 }
 /* ms.c ((prototype)) S377h */
 void avoid_unpleasant_compiler_warnings(void) {
