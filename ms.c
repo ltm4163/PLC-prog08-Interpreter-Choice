@@ -75,7 +75,7 @@ static void addpage(void) {
 // verse the root set and mark each reachable Mvalue as live. Use the visiting
 // procedures in Sections 4.4.2 and N.1.1. Your mark procedure should call the
 // appropriate visiting procedure for each of the roots.
-void mark() {
+static void mark() {
     int startN = nmarks;
     visitroots();
     ncollections++;
@@ -127,9 +127,9 @@ Value* allocloc(void) {
     }
 
     // Try to find an unmarked object in the heap
-    while (hp < heaplimit) {
+    while (hp != heaplimit) {
         Mvalue *m = hp;
-        if (m->live != 1) {
+        if (!m->live) {
             // Found an unmarked object
             // Mark it live and return
             m->live = 1;
@@ -149,23 +149,31 @@ Value* allocloc(void) {
     mark(); // Mark phase
     makecurrent(pagelist); // Reset heap pointers to the first page
 
-    // Try to find an unmarked object again
-    while (hp < heaplimit) {
-        Mvalue *m = hp;
-        if (m->live != 1) {
-            // Found an unmarked object
-            // Mark it live and return
-            m->live = 1;
-            /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
-            gc_debug_pre_allocate(&hp->v);
-            nalloc++;
-            return &(hp++)->v;
-        } else {
-            // Found a marked object
-            // Skip past it and mark it as not live
-            m->live = 0;
+    // Loop through the pages
+    while (curpage->tl != NULL) {
+        // Try to find an unmarked object again
+        while (hp != heaplimit) {
+            Mvalue *m = hp;
+            if (!m->live) {
+                // Found an unmarked object
+                // Mark it live and return
+                m->live = 1;
+                /* tell the debugging interface that [[&hp->v]] is about to be allocated 282e */
+                gc_debug_pre_allocate(&hp->v);
+                nalloc++;
+                return &(hp++)->v;
+            } else {
+                // Found a marked object
+                // Skip past it and mark it as not live
+                m->live = 0;
+            }
+            hp++; // Move to the next object
         }
-        hp++; // Move to the next object
+
+        // Move to the next page
+        if (curpage->tl != NULL) {
+            makecurrent(curpage->tl);
+        }
     }
 
     // If no unmarked objects found, grow the heap
